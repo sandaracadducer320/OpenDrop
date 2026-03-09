@@ -101,7 +101,10 @@ main {
 
 /* Central Profile */
 .my-profile {
-  position: relative;
+  position: absolute;   /* ADD */
+  top: 50%;             /* ADD */
+  left: 50%;            /* ADD */
+  transform: translate(-50%, -50%);  /* ADD */
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -197,6 +200,34 @@ main {
   z-index: 10;
   transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
+
+/* Clip waves so they don't overflow the container */
+main {
+  overflow: hidden;  /* ADD THIS */
+}
+
+.radar-container {
+  overflow: hidden;  /* ADD THIS */
+}
+
+/* Smaller waves on mobile */
+@media (max-width: 768px) {
+  .radar-container {
+    width: 350px;
+    height: 350px;
+  }
+
+  .wave1 {
+    width: 150px;   /* reduced from 250px */
+    height: 150px;
+  }
+
+  .wave2 {
+    width: 280px;   /* reduced from 450px */
+    height: 280px;
+  }
+}
+
 
 .peer-node:hover {
   transform: scale(1.1);
