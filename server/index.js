@@ -75,6 +75,41 @@ app.post('/upload', upload.single('file'), (req, res) => {
     });
 });
 
+// Batch upload endpoint (multiple files)
+app.post('/upload-batch', upload.array('files', 20), (req, res) => {
+    if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ error: 'No files provided' });
+    }
+
+    const expiresAt = Date.now() + FILE_EXPIRY_MS;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const fileEntries = [];
+
+    for (const file of req.files) {
+        const fileId = uuidv4();
+        uploadedFiles.set(fileId, {
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            filePath: file.path,
+            size: file.size,
+            expiresAt,
+        });
+        fileEntries.push({
+            id: fileId,
+            name: file.originalname,
+            size: file.size,
+            url: `${protocol}://${host}/download/${fileId}`,
+        });
+    }
+
+    res.json({
+        files: fileEntries,
+        totalSize: fileEntries.reduce((s, f) => s + f.size, 0),
+        expiresIn: '24 hours',
+    });
+});
+
 // Download endpoint
 app.get('/download/:id', (req, res) => {
     const fileId = req.params.id;

@@ -14,6 +14,13 @@ let myName;
 const peers = new Map(); // id -> { name, element, connection, dataChannel }
 const CHUNK_SIZE = 16384; // 16kb per chunk for WebRTC
 
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
 // WebRTC Configuration
 const rtcConfig = {
     iceServers: [
@@ -37,11 +44,18 @@ const modalContent = document.getElementById('modalContent');
 const modalActions = document.getElementById('modalActions');
 const toastContainer = document.getElementById('toastContainer');
 
-// File transfer state
-let incomingFile = null;
-let receivedChunks = [];
-let receivedSize = 0;
+// --- Transfer State ---
 let currentTransferTarget = null;
+let transferInProgress = false;
+
+// Receiver state
+let incomingBatch = null;
+let receivedChunks = [];
+let currentFileReceivedSize = 0;
+let batchReceivedSize = 0;
+
+// Sender state
+let outgoingBatch = null;
 
 function connectSignaling() {
     updateStatus('connecting', 'Connecting...');
@@ -84,10 +98,6 @@ function connectSignaling() {
 
             case 'candidate':
                 await handleCandidate(msg);
-                break;
-
-            case 'file-header':
-                handleIncomingFileRequest(msg);
                 break;
         }
     };
@@ -132,7 +142,7 @@ function addPeer(id, name) {
     const angle = Math.random() * Math.PI * 2;
     // Use container size to scale distance dynamically for all screen sizes
     const containerSize = Math.min(radarContainer.offsetWidth, radarContainer.offsetHeight);
-  
+
     const maxDistance = containerSize * 0.35; // 35% of container radius
     const distance = maxDistance * (0.6 + Math.random() * 0.4);
 
@@ -149,10 +159,46 @@ function addPeer(id, name) {
         <div class="peer-name">${name}</div>
     `;
 
-    // Click to send file
+    // Click to send file(s)
     el.addEventListener('click', () => {
         currentTransferTarget = id;
         fileInput.click();
+    });
+
+    // Drag-and-drop support
+    el.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.add('drag-over');
+    });
+
+    el.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.add('drag-over');
+    });
+
+    el.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.remove('drag-over');
+    });
+
+    el.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.remove('drag-over');
+
+        const files = Array.from(e.dataTransfer.files);
+        if (!files.length) return;
+
+        if (transferInProgress) {
+            showToast('A transfer is already in progress', 'error');
+            return;
+        }
+
+        currentTransferTarget = id;
+        await initiateTransfer(id, files);
     });
 
     peersContainer.appendChild(el);
@@ -236,101 +282,261 @@ async function handleCandidate(msg) {
 }
 
 // ---------------------------
-// Data Channel & File Transfer
+// Data Channel & Batch Transfer Protocol
 // ---------------------------
 
 function setupDataChannel(peerId, dc) {
     dc.binaryType = 'arraybuffer';
 
-    dc.onopen = () => console.log(`DataChannel open with ${peers.get(peerId).name}`);
-    dc.onclose = () => console.log(`DataChannel closed with ${peers.get(peerId).name}`);
+    dc.onopen = () => console.log(`DataChannel open with ${peers.get(peerId)?.name}`);
+    dc.onclose = () => console.log(`DataChannel closed with ${peers.get(peerId)?.name}`);
 
     dc.onmessage = (e) => {
         if (typeof e.data === 'string') {
             const msg = JSON.parse(e.data);
-            if (msg.type === 'file-header') handleIncomingFileRequest(msg, peerId);
-            else if (msg.type === 'transfer-accepted') startSendingFile(peerId);
-            else if (msg.type === 'transfer-rejected') showToast('Transfer rejected', 'error');
-            else if (msg.type === 'file-complete') finishReceivingFile();
+            switch (msg.type) {
+                // Receiver-side messages
+                case 'batch-header':
+                    handleIncomingBatchRequest(msg, peerId);
+                    break;
+                case 'file-start':
+                    handleFileStart(msg);
+                    break;
+                case 'file-complete':
+                    handleFileComplete(msg);
+                    break;
+                case 'batch-complete':
+                    handleBatchComplete();
+                    break;
+                case 'batch-cancelled':
+                    handleBatchCancelled();
+                    break;
+
+                // Sender-side messages
+                case 'batch-accepted':
+                    startSendingBatch(peerId);
+                    break;
+                case 'batch-rejected':
+                    showToast('Transfer was declined', 'error');
+                    outgoingBatch = null;
+                    transferInProgress = false;
+                    modalOverlay.classList.add('hidden');
+                    document.querySelector('.modal').classList.remove('batch-modal');
+                    break;
+            }
         } else {
-            // Binary chunk received
+            // Binary data = file chunk
             receiveChunk(e.data);
         }
     };
 }
 
-fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file || !currentTransferTarget) return;
+// ---------------------------
+// File Selection & Transfer Initiation
+// ---------------------------
 
-    // If connection isn't established, establish it first
-    const peer = peers.get(currentTransferTarget);
-    if (!peer.connection || peer.connection.connectionState !== 'connected') {
-        await startConnection(currentTransferTarget);
-        // Wait briefly for connection (in reality, should listen for connection state change)
-        setTimeout(() => sendFileHeader(currentTransferTarget, file), 1000);
-    } else {
-        sendFileHeader(currentTransferTarget, file);
+fileInput.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length || !currentTransferTarget) return;
+
+    if (transferInProgress) {
+        showToast('A transfer is already in progress', 'error');
+        fileInput.value = '';
+        return;
     }
 
-    fileInput.value = ''; // Reset input
+    await initiateTransfer(currentTransferTarget, files);
+    fileInput.value = '';
 });
 
-function sendFileHeader(peerId, file) {
+async function initiateTransfer(peerId, files) {
     const peer = peers.get(peerId);
-    if (!peer || !peer.dataChannel || peer.dataChannel.readyState !== 'open') {
+
+    if (!peer.connection || peer.connection.connectionState !== 'connected') {
+        await startConnection(peerId);
+        const waitForChannel = () => {
+            const p = peers.get(peerId);
+            if (p?.dataChannel?.readyState === 'open') {
+                sendBatchHeader(peerId, files);
+            } else {
+                setTimeout(waitForChannel, 200);
+            }
+        };
+        setTimeout(waitForChannel, 500);
+    } else {
+        sendBatchHeader(peerId, files);
+    }
+}
+
+// ---------------------------
+// Sender Flow
+// ---------------------------
+
+function sendBatchHeader(peerId, files) {
+    const peer = peers.get(peerId);
+    if (!peer?.dataChannel || peer.dataChannel.readyState !== 'open') {
         showToast('Connection not ready. Try again.', 'error');
         return;
     }
 
-    // Attach file to peer object temporarily
-    peer.pendingFile = file;
+    const totalSize = files.reduce((sum, f) => sum + f.size, 0);
 
-    // Send metadata first natively over datachannel
+    outgoingBatch = {
+        targetPeerId: peerId,
+        files: files,
+        totalSize: totalSize,
+        currentFileIndex: 0,
+        currentFileOffset: 0,
+    };
+    transferInProgress = true;
+
     peer.dataChannel.send(JSON.stringify({
-        type: 'file-header',
-        name: file.name,
-        size: file.size,
-        mime: file.type
+        type: 'batch-header',
+        files: files.map(f => ({ name: f.name, size: f.size, mime: f.type })),
+        totalSize: totalSize,
+        fileCount: files.length,
     }));
 
-    showToast(`Waiting for ${peer.name} to accept...`, 'info');
+    showSenderModal(peer.name, files, totalSize);
 }
 
-function startSendingFile(peerId) {
+function showSenderModal(peerName, files, totalSize) {
+    const modalEl = document.querySelector('.modal');
+    modalEl.classList.add('batch-modal');
+
+    modalTitle.textContent = `Sending to ${peerName}`;
+    modalContent.innerHTML = `
+        <div class="batch-summary">
+            <span>${files.length} file${files.length > 1 ? 's' : ''}</span>
+            <span class="file-size">${formatSize(totalSize)}</span>
+        </div>
+        <div class="file-list" id="senderFileList">
+            ${files.map((f, i) => `
+                <div class="file-list-item" id="sendFile${i}">
+                    <i class="ri-file-line"></i>
+                    <div class="file-details">
+                        <span class="file-name">${f.name}</span>
+                        <span class="file-size">${formatSize(f.size)}</span>
+                    </div>
+                    <div class="file-status" id="sendStatus${i}">
+                        <i class="ri-time-line"></i>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        <div class="progress-container" id="senderOverallProgress">
+            <div class="progress-bar" id="senderOverallBar"></div>
+        </div>
+        <p class="upload-status" id="senderStatusText">Waiting for acceptance...</p>
+    `;
+
+    modalActions.innerHTML = `
+        <button class="btn btn-secondary" id="btnCancelSend">Cancel</button>
+    `;
+    modalOverlay.classList.remove('hidden');
+
+    document.getElementById('btnCancelSend').onclick = () => {
+        const peer = peers.get(outgoingBatch?.targetPeerId);
+        if (peer?.dataChannel?.readyState === 'open') {
+            peer.dataChannel.send(JSON.stringify({ type: 'batch-cancelled' }));
+        }
+        outgoingBatch = null;
+        transferInProgress = false;
+        modalOverlay.classList.add('hidden');
+        modalEl.classList.remove('batch-modal');
+    };
+}
+
+function startSendingBatch(peerId) {
+    if (!outgoingBatch) return;
+
+    const statusEl = document.getElementById('senderStatusText');
+    if (statusEl) statusEl.textContent = 'Sending...';
+
+    sendNextFileInBatch(peerId);
+}
+
+function sendNextFileInBatch(peerId) {
+    const batch = outgoingBatch;
+    if (!batch) return;
+
     const peer = peers.get(peerId);
-    const file = peer.pendingFile;
     const dc = peer.dataChannel;
+    const fileIndex = batch.currentFileIndex;
+    const file = batch.files[fileIndex];
 
-    if (!file || !dc) return;
+    // Mark this file as active in sender UI
+    const fileEl = document.getElementById(`sendFile${fileIndex}`);
+    if (fileEl) fileEl.classList.add('active');
+    const statusIcon = document.getElementById(`sendStatus${fileIndex}`);
+    if (statusIcon) statusIcon.innerHTML = '<i class="ri-loader-4-line"></i>';
 
-    showToast(`Sending ${file.name}...`, 'info');
+    // Notify receiver which file is starting
+    dc.send(JSON.stringify({
+        type: 'file-start',
+        index: fileIndex,
+        name: file.name,
+        size: file.size,
+        mime: file.type,
+    }));
 
-    // UI Progress could be added here
     let offset = 0;
+    batch.currentFileOffset = 0;
 
     const readSlice = (o) => {
-        const slice = file.slice(offset, o + CHUNK_SIZE);
+        const slice = file.slice(o, o + CHUNK_SIZE);
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = (evt) => {
             if (dc.readyState !== 'open') return;
 
-            // Send chunk
-            dc.send(e.target.result);
-            offset += e.target.result.byteLength;
+            dc.send(evt.target.result);
+            offset += evt.target.result.byteLength;
+            batch.currentFileOffset = offset;
+
+            updateSenderProgress(batch);
 
             if (offset < file.size) {
-                // Throttle sending if buffer is full
-                if(dc.bufferedAmount > 1024 * 1024) {
+                if (dc.bufferedAmount > 1024 * 1024) {
                     setTimeout(() => readSlice(offset), 50);
                 } else {
                     readSlice(offset);
                 }
             } else {
-                // Complete
-                dc.send(JSON.stringify({ type: 'file-complete' }));
-                showToast('File sent successfully', 'success');
-                peer.pendingFile = null;
+                dc.send(JSON.stringify({
+                    type: 'file-complete',
+                    index: fileIndex,
+                }));
+
+                if (fileEl) {
+                    fileEl.classList.remove('active');
+                    fileEl.classList.add('completed');
+                }
+                if (statusIcon) statusIcon.innerHTML = '<i class="ri-check-line"></i>';
+
+                batch.currentFileIndex++;
+                batch.currentFileOffset = 0;
+
+                if (batch.currentFileIndex < batch.files.length) {
+                    sendNextFileInBatch(peerId);
+                } else {
+                    dc.send(JSON.stringify({ type: 'batch-complete' }));
+
+                    const statusEl = document.getElementById('senderStatusText');
+                    if (statusEl) {
+                        statusEl.textContent = `All ${batch.files.length} file${batch.files.length > 1 ? 's' : ''} sent!`;
+                    }
+
+                    modalActions.innerHTML =
+                        '<button class="btn btn-primary" id="btnCloseSender">Done</button>';
+                    document.getElementById('btnCloseSender').onclick = () => {
+                        modalOverlay.classList.add('hidden');
+                        document.querySelector('.modal').classList.remove('batch-modal');
+                        outgoingBatch = null;
+                        transferInProgress = false;
+                    };
+
+                    showToast(`Sent ${batch.files.length} file${batch.files.length > 1 ? 's' : ''} successfully`, 'success');
+                }
             }
         };
         reader.readAsArrayBuffer(slice);
@@ -339,86 +545,224 @@ function startSendingFile(peerId) {
     readSlice(0);
 }
 
-// Receiving
-function handleIncomingFileRequest(msg, senderId) {
+function updateSenderProgress(batch) {
+    let bytesSent = 0;
+    for (let i = 0; i < batch.currentFileIndex; i++) {
+        bytesSent += batch.files[i].size;
+    }
+    bytesSent += batch.currentFileOffset;
+
+    const overallPct = batch.totalSize > 0 ? (bytesSent / batch.totalSize) * 100 : 0;
+
+    const bar = document.getElementById('senderOverallBar');
+    if (bar) bar.style.width = `${overallPct}%`;
+
+    const statusEl = document.getElementById('senderStatusText');
+    if (statusEl) {
+        statusEl.textContent = `Sending file ${batch.currentFileIndex + 1} of ${batch.files.length} (${Math.round(overallPct)}%)`;
+    }
+}
+
+// ---------------------------
+// Receiver Flow
+// ---------------------------
+
+function handleIncomingBatchRequest(msg, senderId) {
     const sender = peers.get(senderId);
     if (!sender) return;
 
-    incomingFile = {
-        name: msg.name,
-        size: msg.size,
-        mime: msg.mime,
-        senderId: senderId
+    if (transferInProgress) {
+        if (sender.dataChannel?.readyState === 'open') {
+            sender.dataChannel.send(JSON.stringify({ type: 'batch-rejected' }));
+        }
+        showToast(`Declined files from ${sender.name} — transfer in progress`, 'error');
+        return;
+    }
+
+    transferInProgress = true;
+    const fileCount = msg.files.length;
+
+    incomingBatch = {
+        senderId: senderId,
+        files: msg.files,
+        totalSize: msg.totalSize,
+        currentFileIndex: -1,
+        receivedFiles: [],
     };
     receivedChunks = [];
-    receivedSize = 0;
+    currentFileReceivedSize = 0;
+    batchReceivedSize = 0;
 
-    // Show Modal
-    modalTitle.textContent = `${sender.name} wants to send you a file`;
+    const modalEl = document.querySelector('.modal');
+    modalEl.classList.add('batch-modal');
+
+    modalTitle.textContent = `${sender.name} wants to send ${fileCount} file${fileCount > 1 ? 's' : ''}`;
     modalContent.innerHTML = `
-        <div class="file-info">
-            <i class="ri-file-line"></i>
-            <div class="file-details">
-                <span class="file-name">${msg.name}</span>
-                <span class="file-size">${(msg.size / (1024*1024)).toFixed(2)} MB</span>
-            </div>
+        <div class="batch-summary">
+            <span>${fileCount} file${fileCount > 1 ? 's' : ''}</span>
+            <span class="file-size">${formatSize(msg.totalSize)}</span>
         </div>
-        <div class="progress-container hidden" id="receiveProgressContainer">
-            <div class="progress-bar" id="receiveProgressBar"></div>
+        <div class="file-list" id="receiverFileList">
+            ${msg.files.map((f, i) => `
+                <div class="file-list-item" id="recvFile${i}">
+                    <i class="ri-file-line"></i>
+                    <div class="file-details">
+                        <span class="file-name">${f.name}</span>
+                        <span class="file-size">${formatSize(f.size)}</span>
+                    </div>
+                    <div class="file-progress-mini hidden" id="recvProgress${i}">
+                        <div class="progress-bar-mini" id="recvBar${i}"></div>
+                    </div>
+                    <div class="file-status" id="recvStatus${i}">
+                        <i class="ri-time-line"></i>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        <div class="progress-container hidden" id="receiveOverallProgressContainer">
+            <div class="progress-bar" id="receiveOverallBar"></div>
         </div>
     `;
 
     modalActions.innerHTML = `
-        <button class="btn btn-secondary" id="btnReject">Decline</button>
-        <button class="btn btn-primary" id="btnAccept">Accept</button>
+        <button class="btn btn-secondary" id="btnRejectBatch">Decline All</button>
+        <button class="btn btn-primary" id="btnAcceptBatch">Accept All</button>
     `;
-
     modalOverlay.classList.remove('hidden');
 
-    document.getElementById('btnReject').onclick = () => {
-        sender.dataChannel.send(JSON.stringify({ type: 'transfer-rejected' }));
+    document.getElementById('btnRejectBatch').onclick = () => {
+        if (sender.dataChannel?.readyState === 'open') {
+            sender.dataChannel.send(JSON.stringify({ type: 'batch-rejected' }));
+        }
         modalOverlay.classList.add('hidden');
-        incomingFile = null;
+        modalEl.classList.remove('batch-modal');
+        incomingBatch = null;
+        transferInProgress = false;
     };
 
-    document.getElementById('btnAccept').onclick = () => {
-        document.getElementById('btnReject').style.display = 'none';
-        document.getElementById('btnAccept').style.display = 'none';
-        document.getElementById('receiveProgressContainer').classList.remove('hidden');
-
-        sender.dataChannel.send(JSON.stringify({ type: 'transfer-accepted' }));
+    document.getElementById('btnAcceptBatch').onclick = () => {
+        document.getElementById('btnRejectBatch').style.display = 'none';
+        document.getElementById('btnAcceptBatch').style.display = 'none';
+        document.getElementById('receiveOverallProgressContainer').classList.remove('hidden');
+        sender.dataChannel.send(JSON.stringify({ type: 'batch-accepted' }));
     };
+}
+
+function handleFileStart(msg) {
+    if (!incomingBatch) return;
+
+    incomingBatch.currentFileIndex = msg.index;
+    receivedChunks = [];
+    currentFileReceivedSize = 0;
+
+    const fileEl = document.getElementById(`recvFile${msg.index}`);
+    if (fileEl) fileEl.classList.add('active');
+
+    const statusIcon = document.getElementById(`recvStatus${msg.index}`);
+    if (statusIcon) statusIcon.innerHTML = '<i class="ri-loader-4-line"></i>';
+
+    const progressEl = document.getElementById(`recvProgress${msg.index}`);
+    if (progressEl) progressEl.classList.remove('hidden');
 }
 
 function receiveChunk(data) {
-    if (!incomingFile) return;
-    receivedChunks.push(data);
-    receivedSize += data.byteLength;
+    if (!incomingBatch || incomingBatch.currentFileIndex < 0) return;
 
-    const progress = (receivedSize / incomingFile.size) * 100;
-    const bar = document.getElementById('receiveProgressBar');
-    if (bar) bar.style.width = `${progress}%`;
+    receivedChunks.push(data);
+    currentFileReceivedSize += data.byteLength;
+    batchReceivedSize += data.byteLength;
+
+    const currentFile = incomingBatch.files[incomingBatch.currentFileIndex];
+    const filePct = currentFile.size > 0 ? (currentFileReceivedSize / currentFile.size) * 100 : 0;
+    const miniBar = document.getElementById(`recvBar${incomingBatch.currentFileIndex}`);
+    if (miniBar) miniBar.style.width = `${filePct}%`;
+
+    const overallPct = incomingBatch.totalSize > 0 ? (batchReceivedSize / incomingBatch.totalSize) * 100 : 0;
+    const overallBar = document.getElementById('receiveOverallBar');
+    if (overallBar) overallBar.style.width = `${overallPct}%`;
 }
 
-function finishReceivingFile() {
-    if (!incomingFile) return;
+function handleFileComplete(msg) {
+    if (!incomingBatch) return;
 
-    const blob = new Blob(receivedChunks, { type: incomingFile.mime });
+    const fileInfo = incomingBatch.files[msg.index];
+    const blob = new Blob(receivedChunks, { type: fileInfo.mime });
+
+    incomingBatch.receivedFiles.push({ name: fileInfo.name, blob: blob });
+
+    const fileEl = document.getElementById(`recvFile${msg.index}`);
+    if (fileEl) {
+        fileEl.classList.remove('active');
+        fileEl.classList.add('completed');
+    }
+    const statusIcon = document.getElementById(`recvStatus${msg.index}`);
+    if (statusIcon) statusIcon.innerHTML = '<i class="ri-check-line"></i>';
+
+    const progressEl = document.getElementById(`recvProgress${msg.index}`);
+    if (progressEl) progressEl.classList.add('hidden');
+
+    receivedChunks = [];
+    currentFileReceivedSize = 0;
+}
+
+function handleBatchComplete() {
+    if (!incomingBatch) return;
+
+    const fileCount = incomingBatch.receivedFiles.length;
+    showToast(`Received ${fileCount} file${fileCount > 1 ? 's' : ''}`, 'success');
+
+    incomingBatch.receivedFiles.forEach((rf, i) => {
+        const fileEl = document.getElementById(`recvFile${i}`);
+        if (fileEl) {
+            const btn = document.createElement('button');
+            btn.className = 'file-download-btn';
+            btn.title = `Download ${rf.name}`;
+            btn.innerHTML = '<i class="ri-download-line"></i>';
+            btn.onclick = () => downloadBlob(rf.blob, rf.name);
+            fileEl.appendChild(btn);
+        }
+    });
+
+    modalActions.innerHTML = `
+        <button class="btn btn-secondary" id="btnCloseBatch">Close</button>
+        <button class="btn btn-primary" id="btnDownloadAll">
+            <i class="ri-download-line"></i> Download All
+        </button>
+    `;
+
+    document.getElementById('btnCloseBatch').onclick = () => {
+        modalOverlay.classList.add('hidden');
+        document.querySelector('.modal').classList.remove('batch-modal');
+        incomingBatch = null;
+        transferInProgress = false;
+    };
+
+    document.getElementById('btnDownloadAll').onclick = () => {
+        incomingBatch.receivedFiles.forEach((rf, i) => {
+            setTimeout(() => downloadBlob(rf.blob, rf.name), i * 300);
+        });
+    };
+}
+
+function handleBatchCancelled() {
+    showToast('Transfer was cancelled', 'error');
+    modalOverlay.classList.add('hidden');
+    document.querySelector('.modal').classList.remove('batch-modal');
+    incomingBatch = null;
+    outgoingBatch = null;
+    receivedChunks = [];
+    transferInProgress = false;
+}
+
+function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
-
-    // Auto download
     const a = document.createElement('a');
     a.href = url;
-    a.download = incomingFile.name;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    showToast(`Received ${incomingFile.name}`, 'success');
-    modalOverlay.classList.add('hidden');
-    incomingFile = null;
-    receivedChunks = [];
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function sendSignaling(data) {
@@ -439,19 +783,30 @@ shareLinkBtn.addEventListener('click', () => {
 });
 
 shareFileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
     shareFileInput.value = '';
 
-    // Show uploading modal
-    modalTitle.textContent = 'Uploading File';
+    const totalSize = files.reduce((s, f) => s + f.size, 0);
+    const modalEl = document.querySelector('.modal');
+    modalEl.classList.add('batch-modal');
+
+    modalTitle.textContent = `Uploading ${files.length} File${files.length > 1 ? 's' : ''}`;
     modalContent.innerHTML = `
-        <div class="file-info">
-            <i class="ri-upload-cloud-line"></i>
-            <div class="file-details">
-                <span class="file-name">${file.name}</span>
-                <span class="file-size">${(file.size / (1024 * 1024)).toFixed(2)} MB</span>
-            </div>
+        <div class="batch-summary">
+            <span>${files.length} file${files.length > 1 ? 's' : ''}</span>
+            <span class="file-size">${formatSize(totalSize)}</span>
+        </div>
+        <div class="file-list">
+            ${files.map((f, i) => `
+                <div class="file-list-item" id="uploadFile${i}">
+                    <i class="ri-upload-cloud-line"></i>
+                    <div class="file-details">
+                        <span class="file-name">${f.name}</span>
+                        <span class="file-size">${formatSize(f.size)}</span>
+                    </div>
+                </div>
+            `).join('')}
         </div>
         <div class="progress-container" id="uploadProgressContainer">
             <div class="progress-bar" id="uploadProgressBar"></div>
@@ -463,10 +818,10 @@ shareFileInput.addEventListener('change', async (e) => {
 
     try {
         const formData = new FormData();
-        formData.append('file', file);
+        files.forEach(f => formData.append('files', f));
 
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_URL}/upload`);
+        xhr.open('POST', `${API_URL}/upload-batch`);
 
         xhr.upload.onprogress = (evt) => {
             if (evt.lengthComputable) {
@@ -479,58 +834,80 @@ shareFileInput.addEventListener('change', async (e) => {
         xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
                 const data = JSON.parse(xhr.responseText);
-                showShareLinkResult(data);
+                showBatchShareResult(data);
             } else {
-                showToast('Upload failed. File may be too large (max 100MB).', 'error');
+                showToast('Upload failed. Files may be too large.', 'error');
                 modalOverlay.classList.add('hidden');
+                modalEl.classList.remove('batch-modal');
             }
         };
 
         xhr.onerror = () => {
             showToast('Upload failed. Check your connection.', 'error');
             modalOverlay.classList.add('hidden');
+            modalEl.classList.remove('batch-modal');
         };
 
         xhr.send(formData);
     } catch (err) {
         showToast('Upload failed.', 'error');
         modalOverlay.classList.add('hidden');
+        modalEl.classList.remove('batch-modal');
     }
 });
 
-function showShareLinkResult(data) {
-    modalTitle.textContent = 'File Ready to Share';
+function showBatchShareResult(data) {
+    modalTitle.textContent = `${data.files.length} File${data.files.length > 1 ? 's' : ''} Ready to Share`;
     modalContent.innerHTML = `
-        <div class="file-info">
-            <i class="ri-check-double-line"></i>
-            <div class="file-details">
-                <span class="file-name">${data.name}</span>
-                <span class="file-size">${(data.size / (1024 * 1024)).toFixed(2)} MB</span>
-            </div>
+        <div class="file-list">
+            ${data.files.map((f, i) => `
+                <div class="file-list-item">
+                    <i class="ri-check-double-line"></i>
+                    <div class="file-details">
+                        <span class="file-name">${f.name}</span>
+                        <span class="file-size">${formatSize(f.size)}</span>
+                    </div>
+                </div>
+                <div class="share-link-box">
+                    <input type="text" id="shareLink${i}" value="${f.url}" readonly />
+                    <button class="btn-copy" id="copyBtn${i}" title="Copy link">
+                        <i class="ri-file-copy-line"></i>
+                    </button>
+                </div>
+            `).join('')}
         </div>
-        <div class="share-link-box">
-            <input type="text" id="shareLinkInput" value="${data.url}" readonly />
-            <button class="btn-copy" id="copyLinkBtn" title="Copy link">
-                <i class="ri-file-copy-line"></i>
-            </button>
-        </div>
-        <p class="share-link-note">Link expires in ${data.expiresIn}</p>
+        <p class="share-link-note">Links expire in ${data.expiresIn}</p>
     `;
+
     modalActions.innerHTML = `
+        <button class="btn btn-secondary" id="btnCopyAll">Copy All Links</button>
         <button class="btn btn-primary" id="btnCloseShare">Done</button>
     `;
 
-    document.getElementById('btnCloseShare').onclick = () => {
-        modalOverlay.classList.add('hidden');
-    };
+    data.files.forEach((f, i) => {
+        document.getElementById(`copyBtn${i}`).onclick = () => {
+            navigator.clipboard.writeText(f.url).then(() => {
+                showToast('Link copied!', 'success');
+            });
+        };
+    });
 
-    document.getElementById('copyLinkBtn').onclick = () => {
-        const input = document.getElementById('shareLinkInput');
-        navigator.clipboard.writeText(input.value).then(() => {
-            showToast('Link copied to clipboard!', 'success');
+    document.getElementById('btnCopyAll').onclick = () => {
+        const allLinks = data.files.map(f => f.url).join('\n');
+        navigator.clipboard.writeText(allLinks).then(() => {
+            showToast('All links copied to clipboard!', 'success');
         });
     };
+
+    document.getElementById('btnCloseShare').onclick = () => {
+        modalOverlay.classList.add('hidden');
+        document.querySelector('.modal').classList.remove('batch-modal');
+    };
 }
+
+// Prevent browser default file drop behavior
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
 
 // Start
 connectSignaling();
