@@ -99,7 +99,7 @@ app.post('/upload-batch', (req, res, next) => {
                 if (err.code === 'LIMIT_FILE_SIZE') {
                     statusCode = 413;
                     message = `File too large. Maximum allowed size is ${MAX_FILE_SIZE} bytes.`;
-                } else if (err.code === 'LIMIT_FILE_COUNT') {
+                } else if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
                     statusCode = 400;
                     message = 'Too many files uploaded. Maximum allowed is 20 files per request.';
                 } else if (err.message) {
@@ -109,8 +109,10 @@ app.post('/upload-batch', (req, res, next) => {
                 return res.status(statusCode).json({ error: message });
             }
 
-            // Non-Multer errors: delegate to the next error handler
-            return next(err);
+          // Non-Multer errors: return a JSON error response instead of relying on the default HTML handler
+             const statusCode = 500;
+             const message = err && err.message ? err.message : 'Internal server error during file upload.';
+             return res.status(statusCode).json({ error: message });
         }
 
         if (!req.files || req.files.length === 0) {
@@ -125,11 +127,9 @@ app.post('/upload-batch', (req, res, next) => {
              // Clean up uploaded files if batch size exceeds limit
              for (const file of req.files) {
                  if (file && file.path) {
-                     try {
-                         fs.unlinkSync(file.path);
-                     } catch (unlinkErr) {
+                     fs.unlink(file.path, () => {
                          // Ignore cleanup errors; main error response still returned
-                     }
+                       });
                  }
              }
              return res.status(413).json({

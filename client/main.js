@@ -358,17 +358,24 @@ fileInput.addEventListener('change', async (e) => {
 async function initiateTransfer(peerId, files) {
     const peer = peers.get(peerId);
 
-    // Guard: peer might have disconnected between selection and transfer start
-    if (!peer) {
-        if (typeof currentTransferTarget !== 'undefined') {
-            currentTransferTarget = null;
-        }
-        showToast('Selected device is no longer available. Please choose a device again.', 'error');
-        return;
-    }
-
+     // Mark transfer as in progress as soon as a transfer is initiated
+     if (typeof transferInProgress !== 'undefined') {
+         transferInProgress = true;
+     }
      if (!peer.connection || peer.connection.connectionState !== 'connected') {
-         await startConnection(peerId);
+         try {
+              await startConnection(peerId);
+          } catch (err) {
+              // Failed to establish the connection: reset transfer state and notify the user
+              if (typeof transferInProgress !== 'undefined') {
+                  transferInProgress = false;
+              }
+              if (typeof outgoingBatch !== 'undefined') {
+                  outgoingBatch = null;
+              }
+              showToast('Unable to start connection. Please try again.', 'error');
+              return;
+          }
 
          const maxWaitMs = 10000; // maximum time to wait for data channel to open
          const pollIntervalMs = 200;
@@ -449,24 +456,42 @@ function showSenderModal(peerName, files, totalSize) {
             <span class="file-size">${formatSize(totalSize)}</span>
         </div>
         <div class="file-list" id="senderFileList">
-            ${files.map((f, i) => `
-                <div class="file-list-item" id="sendFile${i}">
-                    <i class="ri-file-line"></i>
-                    <div class="file-details">
-                        <span class="file-name">${f.name}</span>
-                        <span class="file-size">${formatSize(f.size)}</span>
-                    </div>
-                    <div class="file-status" id="sendStatus${i}">
-                        <i class="ri-time-line"></i>
-                    </div>
-                </div>
-            `).join('')}
         </div>
         <div class="progress-container" id="senderOverallProgress">
             <div class="progress-bar" id="senderOverallBar"></div>
         </div>
         <p class="upload-status" id="senderStatusText">Waiting for acceptance...</p>
     `;
+
+    // Populate file list using DOM APIs to avoid injecting filenames into innerHTML
+     const senderFileListEl = document.getElementById('senderFileList');
+     files.forEach((f, i) => {
+         const itemEl = document.createElement('div');
+         itemEl.className = 'file-list-item';
+         itemEl.id = `sendFile${i}`;
+         const iconEl = document.createElement('i');
+         iconEl.className = 'ri-file-line';
+         const detailsEl = document.createElement('div');
+         detailsEl.className = 'file-details';
+         const nameEl = document.createElement('span');
+         nameEl.className = 'file-name';
+         nameEl.textContent = f.name;
+         const sizeEl = document.createElement('span');
+         sizeEl.className = 'file-size';
+         sizeEl.textContent = formatSize(f.size);
+         detailsEl.appendChild(nameEl);
+         detailsEl.appendChild(sizeEl);
+         const statusEl = document.createElement('div');
+         statusEl.className = 'file-status';
+         statusEl.id = `sendStatus${i}`;
+         const statusIconEl = document.createElement('i');
+         statusIconEl.className = 'ri-time-line';
+         statusEl.appendChild(statusIconEl);
+         itemEl.appendChild(iconEl);
+         itemEl.appendChild(detailsEl);
+         itemEl.appendChild(statusEl);
+         senderFileListEl.appendChild(itemEl);
+     });
 
     modalActions.innerHTML = `
         <button class="btn btn-secondary" id="btnCancelSend">Cancel</button>
@@ -811,19 +836,18 @@ function receiveChunk(data) {
          receivedChunks = [];
          currentFileReceivedSize = 0;
          batchReceivedSize = 0;
-          // Also clear any global transfer-in-progress flag and close the incoming transfer UI.
+           // Also clear any global transfer-in-progress flag and close the incoming transfer UI.
           if (typeof transferInProgress !== 'undefined') {
               transferInProgress = false;
           }
-          // If there is a dedicated helper to close the incoming modal, use it defensively.
-          if (typeof closeIncomingModal === 'function') {
-              closeIncomingModal();
-          } else {
-              // Fallback: hide a likely incoming-transfer modal element if present.
-              const incomingModalEl = document.getElementById('incomingModal');
-              if (incomingModalEl) {
-                  incomingModalEl.classList.add('hidden');
-              }
+          // Hide the batch transfer modal overlay using the same elements used elsewhere.
+          if (typeof modalOverlay !== 'undefined' && modalOverlay) {
+              modalOverlay.classList.add('hidden');
+          }
+          // Remove the batch-modal state from the main modal element.
+          let modalEl = (typeof modal !== 'undefined' && modal) ? modal : document.querySelector('.modal');
+          if (modalEl) {
+              modalEl.classList.remove('batch-modal');
           }
          return;
      }
@@ -907,7 +931,8 @@ function handleBatchComplete() {
     showToast(`Received ${fileCount} file${fileCount > 1 ? 's' : ''}`, 'success');
 
     incomingBatch.receivedFiles.forEach((rf, i) => {
-        const fileEl = document.getElementById(`recvFile${i}`);
+        const targetIndex = (typeof rf.index === 'number') ? rf.index : i;
+        const fileEl = document.getElementById(`recvFile${targetIndex}`);
         if (fileEl) {
             const btn = document.createElement('button');
             btn.className = 'file-download-btn';
@@ -993,22 +1018,37 @@ shareFileInput.addEventListener('change', async (e) => {
             <span>${files.length} file${files.length > 1 ? 's' : ''}</span>
             <span class="file-size">${formatSize(totalSize)}</span>
         </div>
-        <div class="file-list">
-            ${files.map((f, i) => `
-                <div class="file-list-item" id="uploadFile${i}">
-                    <i class="ri-upload-cloud-line"></i>
-                    <div class="file-details">
-                        <span class="file-name">${f.name}</span>
-                        <span class="file-size">${formatSize(f.size)}</span>
-                    </div>
-                </div>
-            `).join('')}
-        </div>
+         <div class="file-list"></div>
         <div class="progress-container" id="uploadProgressContainer">
             <div class="progress-bar" id="uploadProgressBar"></div>
         </div>
         <p class="upload-status" id="uploadStatus">Uploading...</p>
     `;
+
+     const fileListEl = modalContent.querySelector('.file-list');
+     if (fileListEl) {
+         files.forEach((f, i) => {
+             const item = document.createElement('div');
+             item.className = 'file-list-item';
+             item.id = `uploadFile${i}`;
+             const icon = document.createElement('i');
+             icon.className = 'ri-upload-cloud-line';
+             item.appendChild(icon);
+             const details = document.createElement('div');
+             details.className = 'file-details';
+             const nameSpan = document.createElement('span');
+             nameSpan.className = 'file-name';
+             nameSpan.textContent = f.name;
+             const sizeSpan = document.createElement('span');
+             sizeSpan.className = 'file-size';
+             sizeSpan.textContent = formatSize(f.size);
+             details.appendChild(nameSpan);
+             details.appendChild(sizeSpan);
+             item.appendChild(details);
+             fileListEl.appendChild(item);
+         });
+     }
+
     modalActions.innerHTML = '';
     modalOverlay.classList.remove('hidden');
 
@@ -1054,26 +1094,56 @@ shareFileInput.addEventListener('change', async (e) => {
 
 function showBatchShareResult(data) {
     modalTitle.textContent = `${data.files.length} File${data.files.length > 1 ? 's' : ''} Ready to Share`;
-    modalContent.innerHTML = `
-        <div class="file-list">
-            ${data.files.map((f, i) => `
-                <div class="file-list-item">
-                    <i class="ri-check-double-line"></i>
-                    <div class="file-details">
-                        <span class="file-name">${f.name}</span>
-                        <span class="file-size">${formatSize(f.size)}</span>
-                    </div>
-                </div>
-                <div class="share-link-box">
-                    <input type="text" id="shareLink${i}" value="${f.url}" readonly />
-                     <button class="btn-copy" id="copyBtn${i}" title="Copy link" aria-label="Copy link">
-                        <i class="ri-file-copy-line"></i>
-                    </button>
-                </div>
-            `).join('')}
-        </div>
-        <p class="share-link-note">Links expire in ${data.expiresIn}</p>
-    `;
+     // Clear any existing content
+     modalContent.innerHTML = '';
+     // Create the file list container
+     const fileListContainer = document.createElement('div');
+     fileListContainer.className = 'file-list';
+     data.files.forEach((f, i) => {
+         // File list item
+         const fileListItem = document.createElement('div');
+         fileListItem.className = 'file-list-item';
+         const checkIcon = document.createElement('i');
+         checkIcon.className = 'ri-check-double-line';
+         fileListItem.appendChild(checkIcon);
+         const fileDetails = document.createElement('div');
+         fileDetails.className = 'file-details';
+         const fileNameSpan = document.createElement('span');
+         fileNameSpan.className = 'file-name';
+         fileNameSpan.textContent = f.name;
+         const fileSizeSpan = document.createElement('span');
+         fileSizeSpan.className = 'file-size';
+         fileSizeSpan.textContent = formatSize(f.size);
+         fileDetails.appendChild(fileNameSpan);
+         fileDetails.appendChild(fileSizeSpan);
+         fileListItem.appendChild(fileDetails);
+         fileListContainer.appendChild(fileListItem);
+         // Share link box
+         const shareLinkBox = document.createElement('div');
+         shareLinkBox.className = 'share-link-box';
+         const input = document.createElement('input');
+         input.type = 'text';
+         input.id = `shareLink${i}`;
+         input.value = f.url;
+         input.readOnly = true;
+         const copyButton = document.createElement('button');
+         copyButton.className = 'btn-copy';
+         copyButton.id = `copyBtn${i}`;
+         copyButton.title = 'Copy link';
+         copyButton.setAttribute('aria-label', 'Copy link');
+         const copyIcon = document.createElement('i');
+         copyIcon.className = 'ri-file-copy-line';
+         copyButton.appendChild(copyIcon);
+         shareLinkBox.appendChild(input);
+         shareLinkBox.appendChild(copyButton);
+         fileListContainer.appendChild(shareLinkBox);
+     });
+     modalContent.appendChild(fileListContainer);
+     const expiresNote = document.createElement('p');
+     expiresNote.className = 'share-link-note';
+     expiresNote.textContent = `Links expire in ${data.expiresIn}`;
+     modalContent.appendChild(expiresNote);
+
 
     modalActions.innerHTML = `
         <button class="btn btn-secondary" id="btnCopyAll">Copy All Links</button>
