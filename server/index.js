@@ -11,6 +11,34 @@ const MAX_BATCH_SIZE = 500 * 1024 * 1024; // 500 MB maximum total size per batch
 const app = express();
 app.use(cors());
 
+ // Enforce a hard upper bound on total request size before Multer processes uploads.
+ // This guards against bandwidth/disk DoS where many individually valid files
+ // exceed MAX_BATCH_SIZE in aggregate within a single request.
+ app.use((req, res, next) => {
+     // Only enforce for requests that are likely to carry a body (e.g. POST/PUT/PATCH)
+     const method = req.method && req.method.toUpperCase();
+     if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') {
+         return next();
+     }
+     const contentLengthHeader = req.headers['content-length'];
+     if (!contentLengthHeader) {
+         // If Content-Length is not provided, fall through to Multer/body parsers.
+         return next();
+     }
+     const contentLength = parseInt(contentLengthHeader, 10);
+     if (!Number.isFinite(contentLength) || contentLength < 0) {
+         // Malformed Content-Length; treat as if not provided.
+         return next();
+     }
+     if (contentLength > MAX_BATCH_SIZE) {
+         return res.status(413).json({
+             error: `Request payload too large. Maximum allowed total upload size is ${MAX_BATCH_SIZE} bytes.`,
+         });
+     }
+     return next();
+ });
+
+
 // Health check endpoint for Koyeb/Render/Railway
 app.get('/health', (req, res) => {
     res.status(200).send('OK');
