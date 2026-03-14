@@ -13,7 +13,9 @@ app.use(cors());
 
  // Enforce a hard upper bound on total request size before Multer processes uploads.
  // This guards against bandwidth/disk DoS where many individually valid files
- // exceed MAX_BATCH_SIZE in aggregate within a single request.
+ // exceed MAX_BATCH_SIZE in aggregate within a single request. For body-carrying
+ // methods we require a valid Content-Length so that this limit cannot be bypassed
+ // via chunked/unknown-length uploads.
  app.use((req, res, next) => {
      // Only enforce for requests that are likely to carry a body (e.g. POST/PUT/PATCH)
      const method = req.method && req.method.toUpperCase();
@@ -22,13 +24,18 @@ app.use(cors());
      }
      const contentLengthHeader = req.headers['content-length'];
      if (!contentLengthHeader) {
-         // If Content-Length is not provided, fall through to Multer/body parsers.
-         return next();
+         // Reject requests without Content-Length so MAX_BATCH_SIZE cannot be bypassed
+         // using chunked transfer encoding or unknown-length uploads.
+         return res.status(411).json({
+             error: `Content-Length header is required for upload requests and must not exceed ${MAX_BATCH_SIZE} bytes.`,
+         });
      }
      const contentLength = parseInt(contentLengthHeader, 10);
      if (!Number.isFinite(contentLength) || contentLength < 0) {
-         // Malformed Content-Length; treat as if not provided.
-         return next();
+         // Malformed Content-Length: reject rather than falling through to Multer.
+         return res.status(411).json({
+             error: `Invalid Content-Length header. A valid Content-Length up to ${MAX_BATCH_SIZE} bytes is required.`,
+         });
      }
      if (contentLength > MAX_BATCH_SIZE) {
          return res.status(413).json({
