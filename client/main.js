@@ -797,10 +797,18 @@ function handleIncomingBatchRequest(msg, senderId) {
     };
 
     document.getElementById('btnAcceptBatch').onclick = () => {
-        document.getElementById('btnRejectBatch').style.display = 'none';
-        document.getElementById('btnAcceptBatch').style.display = 'none';
-        document.getElementById('receiveOverallProgressContainer').classList.remove('hidden');
-        sender.dataChannel.send(JSON.stringify({ type: 'batch-accepted' }));
+        if (sender.dataChannel?.readyState === 'open') {
+            document.getElementById('btnRejectBatch').style.display = 'none';
+            document.getElementById('btnAcceptBatch').style.display = 'none';
+            document.getElementById('receiveOverallProgressContainer').classList.remove('hidden');
+            sender.dataChannel.send(JSON.stringify({ type: 'batch-accepted' }));
+        } else {
+            // Data channel is no longer available; clean up UI and state
+            modalOverlay.classList.add('hidden');
+            modalEl.classList.remove('batch-modal');
+            incomingBatch = null;
+            transferInProgress = false;
+        }
     };
 }
 
