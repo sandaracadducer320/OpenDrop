@@ -293,7 +293,13 @@ function setupDataChannel(peerId, dc) {
 
     dc.onmessage = (e) => {
         if (typeof e.data === 'string') {
-            const msg = JSON.parse(e.data);
+               let msg;
+             try {
+                 msg = JSON.parse(e.data);
+             } catch (err) {
+                 console.warn('Received invalid JSON over data channel from peer', peerId, err, e.data);
+                 return;
+             }
             switch (msg.type) {
                 // Receiver-side messages
                 case 'batch-header':
@@ -532,13 +538,22 @@ function sendNextFileInBatch(peerId) {
         const slice = file.slice(o, o + CHUNK_SIZE);
         const reader = new FileReader();
         reader.onload = (evt) => {
-           // If the data channel is no longer available, abort and reset state.
+             // If the data channel is no longer available, abort and reset state.
              if (!dc || dc.readyState !== 'open') {
                  outgoingBatch = null;
                  transferInProgress = false;
                  const statusEl = document.getElementById('senderStatusText');
                  if (statusEl) {
                      statusEl.textContent = 'Transfer canceled: receiver disconnected.';
+                 }
+                 // Also close the modal and clear batch-specific styling so the UI
+                 // does not remain stuck in a "sending" state.
+                 if (typeof modalOverlay !== 'undefined' && modalOverlay) {
+                     modalOverlay.classList.add('hidden');
+                 }
+                 const modalEl = document.querySelector('.modal');
+                 if (modalEl) {
+                     modalEl.classList.remove('batch-modal');
                  }
                  return;
              }
@@ -738,35 +753,77 @@ function handleIncomingBatchRequest(msg, senderId) {
 }
 
 function handleFileStart(msg) {
-    if (!incomingBatch) return;
-
-    incomingBatch.currentFileIndex = msg.index;
+    if (!incomingBatch || !incomingBatch.files || !Array.isArray(incomingBatch.files)) return;
+    
+     const index = Number(msg.index);
+     if (!Number.isInteger(index) || index < 0 || index >= incomingBatch.files.length) {
+         console.warn('Received invalid file index in handleFileStart:', msg.index);
+         return;
+     }
+     incomingBatch.currentFileIndex = index;
     receivedChunks = [];
     currentFileReceivedSize = 0;
 
-    const fileEl = document.getElementById(`recvFile${msg.index}`);
+    const fileEl = document.getElementById(`recvFile${index}`);
     if (fileEl) fileEl.classList.add('active');
 
-    const statusIcon = document.getElementById(`recvStatus${msg.index}`);
+    const statusIcon = document.getElementById(`recvStatus${index}`);
     if (statusIcon) statusIcon.innerHTML = '<i class="ri-loader-4-line"></i>';
 
-    const progressEl = document.getElementById(`recvProgress${msg.index}`);
+    const progressEl = document.getElementById(`recvProgress${index}`);
     if (progressEl) progressEl.classList.remove('hidden');
 }
 
 function receiveChunk(data) {
-    if (!incomingBatch || incomingBatch.currentFileIndex < 0) return;
+    if (
+         !incomingBatch ||
+         !incomingBatch.files ||
+         !Array.isArray(incomingBatch.files) ||
+         incomingBatch.currentFileIndex < 0 ||
+         incomingBatch.currentFileIndex >= incomingBatch.files.length
+     ) 
+     {
+         return;
+     }
 
     receivedChunks.push(data);
     currentFileReceivedSize += data.byteLength;
     batchReceivedSize += data.byteLength;
 
-    const currentFile = incomingBatch.files[incomingBatch.currentFileIndex];
-    const filePct = currentFile.size > 0 ? (currentFileReceivedSize / currentFile.size) * 100 : 0;
+   const currentFile =
+         incomingBatch.files && incomingBatch.files[incomingBatch.currentFileIndex];
+     if (!currentFile) {
+         console.warn('Received chunk for invalid/missing file; resetting incoming batch', {
+             currentFileIndex: incomingBatch.currentFileIndex,
+             filesLength: incomingBatch.files ? incomingBatch.files.length : undefined,
+         });
+         // Reset transfer state to avoid processing data for an unknown file.
+         incomingBatch = null;
+         receivedChunks = [];
+         currentFileReceivedSize = 0;
+         batchReceivedSize = 0;
+          // Also clear any global transfer-in-progress flag and close the incoming transfer UI.
+          if (typeof transferInProgress !== 'undefined') {
+              transferInProgress = false;
+          }
+          // If there is a dedicated helper to close the incoming modal, use it defensively.
+          if (typeof closeIncomingModal === 'function') {
+              closeIncomingModal();
+          } else {
+              // Fallback: hide a likely incoming-transfer modal element if present.
+              const incomingModalEl = document.getElementById('incomingModal');
+              if (incomingModalEl) {
+                  incomingModalEl.classList.add('hidden');
+              }
+          }
+         return;
+     }
+     const filePct =
+         currentFile.size > 0 ? (currentFileReceivedSize / currentFile.size) * 100 : 0;
     const miniBar = document.getElementById(`recvBar${incomingBatch.currentFileIndex}`);
     if (miniBar) miniBar.style.width = `${filePct}%`;
 
-    const overallPct = incomingBatch.totalSize > 0 ? (batchReceivedSize / incomingBatch.totalSize) * 100 : 0;
+     const overallPct = incomingBatch.totalSize > 0 ? (batchReceivedSize / incomingBatch.totalSize) * 100 : 0;
     const overallBar = document.getElementById('receiveOverallBar');
     if (overallBar) overallBar.style.width = `${overallPct}%`;
 }
@@ -785,6 +842,20 @@ function handleFileComplete(msg) {
          receivedChunks = [];
          currentFileReceivedSize = 0;
          batchReceivedSize = 0;
+            // Also clear any global transfer-in-progress flag and close the incoming transfer UI.
+          if (typeof transferInProgress !== 'undefined') {
+              transferInProgress = false;
+          }
+          // If there is a dedicated helper to close the incoming modal, use it defensively.
+          if (typeof closeIncomingModal === 'function') {
+              closeIncomingModal();
+          } else {
+              // Fallback: hide a likely incoming-transfer modal element if present.
+              const incomingModalEl = document.getElementById('incomingModal');
+              if (incomingModalEl) {
+                  incomingModalEl.classList.add('hidden');
+              }
+          }
          return;
      }
 

@@ -6,6 +6,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const MAX_BATCH_SIZE = 500 * 1024 * 1024; // 500 MB maximum total size per batch
 
 const app = express();
 app.use(cors());
@@ -117,6 +118,26 @@ app.post('/upload-batch', (req, res, next) => {
         if (!req.files || req.files.length === 0) {
             return res.status(400).json({ error: 'No files provided' });
         }
+
+         const totalBytes = req.files.reduce((sum, file) => {
+             const size = typeof file.size === 'number' ? file.size : 0;
+             return sum + size;
+         }, 0);
+         if (totalBytes > MAX_BATCH_SIZE) {
+             // Clean up uploaded files if batch size exceeds limit
+             for (const file of req.files) {
+                 if (file && file.path) {
+                     try {
+                         fs.unlinkSync(file.path);
+                     } catch (unlinkErr) {
+                         // Ignore cleanup errors; main error response still returned
+                     }
+                 }
+             }
+             return res.status(413).json({
+                 error: `Total uploaded file size exceeds limit of ${MAX_BATCH_SIZE} bytes.`,
+             });
+         }
 
         const expiresAt = Date.now() + FILE_EXPIRY_MS;
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
